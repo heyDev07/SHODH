@@ -1,0 +1,55 @@
+FROM ubuntu:22.04
+
+# Set non-interactive mode
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Java 17, Maven, and necessary tools
+RUN apt-get update && \
+    apt-get install -y \
+    openjdk-17-jdk \
+    maven \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    gcc \
+    g++ \
+    bash \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+WORKDIR /app
+
+# Copy pom.xml first for better caching
+COPY pom.xml .
+
+# Download dependencies
+RUN mvn dependency:go-offline -B
+
+# Copy source code
+COPY src ./src
+
+# Build the application
+RUN mvn clean package -DskipTests -q
+
+# Create a startup script to handle common issues
+RUN echo '#!/bin/bash\n\
+echo "Starting application..."\n\
+echo "JAVA_HOME: $JAVA_HOME"\n\
+echo "Java version:"\n\
+java -version\n\
+echo "Available memory:"\n\
+free -h\n\
+echo "Starting Spring Boot application..."\n\
+exec java -Xmx512m -Xms256m -jar target/contest-platform-1.0.0.jar\n\
+' > start.sh && chmod +x start.sh
+
+# Expose port
+EXPOSE 8080
+
+# Use the startup script
+CMD ["./start.sh"]

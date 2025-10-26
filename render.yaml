@@ -3,16 +3,18 @@ services:
   - type: web
     name: shodh-backend
     env: docker
-    dockerfilePath: ./backend/src/main/docker/Dockerfile.final
+    dockerfilePath: ./backend/src/main/docker/Dockerfile.debug
     dockerContext: ./backend
     plan: starter
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: production
       - key: JAVA_HOME
-        value: /usr/lib/jvm/java-17-openjdk
+        value: /usr/lib/jvm/java-17-openjdk-amd64
       - key: EXECUTION_SERVICE_TYPE
         value: local
+      - key: JAVA_OPTS
+        value: -Xmx512m -Xms256m
     healthCheckPath: /api/contests/CONTEST-001
     
   # Frontend Service  
