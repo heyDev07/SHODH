@@ -1,0 +1,36 @@
+# Backend (Maven/Java)
+backend/target/
+backend/.mvn/
+backend/.idea/
+backend/*.iml
+
+# Frontend (Node/Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+frontend/.vercel
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+*.db
+*.sqlite
+
+# Docker
+docker-compose.override.yml
