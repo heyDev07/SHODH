@@ -21,20 +21,11 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Service
-public class DockerExecutionService implements CodeExecutionService {
-    private static final Logger logger = LoggerFactory.getLogger(DockerExecutionService.class);
-
-    @Value("${docker.image.name:shodh/code-executor}")
-    private String dockerImageName;
+public class LocalExecutionService implements CodeExecutionService {
+    private static final Logger logger = LoggerFactory.getLogger(LocalExecutionService.class);
 
     @Value("${judge.max-execution-time:5000}")
     private int maxExecutionTime;
-
-    @Value("${docker.memory.limit:256m}")
-    private String memoryLimit;
-
-    @Value("${docker.cpus:0.5}")
-    private String cpuLimit;
     
     private static final Map<String, String> LANGUAGE_FILE_EXTENSIONS = new HashMap<>();
     private static final Map<String, String> LANGUAGE_COMPILE_COMMANDS = new HashMap<>();
@@ -72,7 +63,6 @@ public class DockerExecutionService implements CodeExecutionService {
     }
     
     public CodeExecutionService.ExecutionResult executeCode(String code, Problem problem, String language) {
-        String containerName = "executor-" + UUID.randomUUID().toString().substring(0, 8);
         Path tempDir = null;
 
         try {
@@ -95,8 +85,8 @@ public class DockerExecutionService implements CodeExecutionService {
                 String input = inputs.get(i);
                 String expectedOutput = expectedOutputs.get(i);
 
-                // Execute the code with Docker
-                CodeExecutionService.ExecutionResult result = executeTestCase(codeFile, input, containerName + "-" + i, language);
+                // Execute the code locally
+                CodeExecutionService.ExecutionResult result = executeTestCase(codeFile, input, language);
 
                 if (result.getStatus() == SubmissionStatus.ACCEPTED) {
                     // Normalize output (trim whitespace)
@@ -118,9 +108,6 @@ public class DockerExecutionService implements CodeExecutionService {
                     }
                 }
             }
-
-            // Clean up container
-            cleanupContainer(containerName);
 
             // Determine final result
             CodeExecutionService.ExecutionResult finalResult = new CodeExecutionService.ExecutionResult();
@@ -153,121 +140,104 @@ public class DockerExecutionService implements CodeExecutionService {
             }
         }
     }
-
-    private CodeExecutionService.ExecutionResult executeTestCase(Path codeFile, String input, String containerName) {
-        return executeTestCase(codeFile, input, containerName, "java");
-    }
     
-    private CodeExecutionService.ExecutionResult executeTestCase(Path codeFile, String input, String containerName, String language) {
+    private CodeExecutionService.ExecutionResult executeTestCase(Path codeFile, String input, String language) {
         try {
             String compileCommand = LANGUAGE_COMPILE_COMMANDS.getOrDefault(language, "javac Main.java");
             String runCommand = LANGUAGE_RUN_COMMANDS.getOrDefault(language, "java Main");
             
-            String executionCommand;
-            if (compileCommand.isEmpty()) {
-                // Languages that don't need compilation (Python, JavaScript)
-                executionCommand = "timeout " + (maxExecutionTime / 1000) + " " + runCommand;
-            } else {
-                // Languages that need compilation (Java, C, C++)
-                executionCommand = compileCommand + " && timeout " + (maxExecutionTime / 1000) + " " + runCommand;
+            // Change to the directory containing the code file
+            Path workingDir = codeFile.getParent();
+            
+            // Compile if needed
+            if (!compileCommand.isEmpty()) {
+                ProcessBuilder compileBuilder = new ProcessBuilder("bash", "-c", compileCommand);
+                compileBuilder.directory(workingDir.toFile());
+                compileBuilder.redirectErrorStream(true);
+                
+                Process compileProcess = compileBuilder.start();
+                
+                StringBuilder compileOutput = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(compileProcess.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        compileOutput.append(line).append("\n");
+                    }
+                }
+                
+                boolean compileFinished = compileProcess.waitFor(maxExecutionTime, TimeUnit.MILLISECONDS);
+                
+                if (!compileFinished) {
+                    compileProcess.destroyForcibly();
+                    CodeExecutionService.ExecutionResult result = new CodeExecutionService.ExecutionResult();
+                    result.setStatus(SubmissionStatus.TIME_LIMIT_EXCEEDED);
+                    result.setErrorMessage("Compilation time limit exceeded");
+                    return result;
+                }
+                
+                int compileExitCode = compileProcess.exitValue();
+                if (compileExitCode != 0) {
+                    CodeExecutionService.ExecutionResult result = new CodeExecutionService.ExecutionResult();
+                    result.setStatus(SubmissionStatus.COMPILATION_ERROR);
+                    result.setErrorMessage(compileOutput.toString());
+                    return result;
+                }
             }
             
-            ProcessBuilder processBuilder = new ProcessBuilder(
-                    "docker", "run",
-                    "--rm",
-                    "--name", containerName,
-                    "--memory", memoryLimit,
-                    "--cpus", cpuLimit,
-                    "-v", codeFile.getParent().toString() + ":/workspace",
-                    "-w", "/workspace",
-                    "--network", "none",
-                    "--timeout", String.valueOf(maxExecutionTime / 1000),
-                    dockerImageName,
-                    "bash", "-c",
-                    executionCommand
-            );
-
-            processBuilder.redirectErrorStream(true);
-            Process process = processBuilder.start();
-
+            // Run the program
+            ProcessBuilder runBuilder = new ProcessBuilder("bash", "-c", "timeout " + (maxExecutionTime / 1000) + " " + runCommand);
+            runBuilder.directory(workingDir.toFile());
+            runBuilder.redirectErrorStream(true);
+            
+            Process runProcess = runBuilder.start();
+            
             // Write input to the process
-            try (OutputStream stdin = process.getOutputStream()) {
+            try (OutputStream stdin = runProcess.getOutputStream()) {
                 stdin.write(input.getBytes(StandardCharsets.UTF_8));
                 stdin.flush();
             }
-
+            
             // Read output
             StringBuilder output = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    new InputStreamReader(runProcess.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     output.append(line).append("\n");
                 }
             }
-
-            // Read error output
-            StringBuilder errorOutput = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    errorOutput.append(line).append("\n");
-                }
-            }
-
-            boolean finished = process.waitFor(maxExecutionTime, java.util.concurrent.TimeUnit.MILLISECONDS);
+            
+            boolean finished = runProcess.waitFor(maxExecutionTime, TimeUnit.MILLISECONDS);
 
             CodeExecutionService.ExecutionResult result = new CodeExecutionService.ExecutionResult();
 
             if (!finished) {
-                process.destroyForcibly();
+                runProcess.destroyForcibly();
                 result.setStatus(SubmissionStatus.TIME_LIMIT_EXCEEDED);
                 result.setErrorMessage("Time limit exceeded");
-                cleanupContainer(containerName);
                 return result;
             }
 
-            int exitCode = process.exitValue();
+            int exitCode = runProcess.exitValue();
 
             if (exitCode != 0) {
-                if (errorOutput.toString().contains("error:")) {
-                    result.setStatus(SubmissionStatus.COMPILATION_ERROR);
-                    result.setErrorMessage(errorOutput.toString());
-                } else {
-                    result.setStatus(SubmissionStatus.RUNTIME_ERROR);
-                    result.setErrorMessage(errorOutput.toString());
-                }
+                result.setStatus(SubmissionStatus.RUNTIME_ERROR);
+                result.setErrorMessage("Runtime error (exit code: " + exitCode + ")");
                 result.setOutput(output.toString());
             } else {
                 result.setStatus(SubmissionStatus.ACCEPTED);
                 result.setOutput(output.toString());
             }
 
-            cleanupContainer(containerName);
             return result;
 
         } catch (IOException | InterruptedException e) {
-            logger.error("Error executing Docker container", e);
+            logger.error("Error executing code", e);
             CodeExecutionService.ExecutionResult errorResult = new CodeExecutionService.ExecutionResult();
             errorResult.setStatus(SubmissionStatus.RUNTIME_ERROR);
             errorResult.setErrorMessage("Error running code: " + e.getMessage());
-            cleanupContainer(containerName);
             return errorResult;
-        }
-    }
-
-    private void cleanupContainer(String containerName) {
-        try {
-            // Attempt to stop and remove the container if it exists
-            new ProcessBuilder("docker", "rm", "-f", containerName)
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .start()
-                    .waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (Exception e) {
-            // Ignore cleanup errors
-            logger.debug("Error cleaning up container: " + containerName, e);
         }
     }
 

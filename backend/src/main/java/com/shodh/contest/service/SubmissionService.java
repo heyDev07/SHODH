@@ -6,9 +6,11 @@ import com.shodh.contest.model.*;
 import com.shodh.contest.repository.ContestRepository;
 import com.shodh.contest.repository.ProblemRepository;
 import com.shodh.contest.repository.SubmissionRepository;
+import com.shodh.contest.service.CodeExecutionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +37,12 @@ public class SubmissionService {
 
     @Autowired
     private DockerExecutionService dockerExecutionService;
+    
+    @Autowired
+    private LocalExecutionService localExecutionService;
+    
+    @Value("${execution.service.type:docker}")
+    private String executionServiceType;
 
     @Transactional
     public SubmissionResponse submitCode(SubmissionRequest request) {
@@ -80,11 +88,21 @@ public class SubmissionService {
 
             // Execute the code
             Problem problem = submission.getProblem();
-            DockerExecutionService.ExecutionResult result = dockerExecutionService.executeCode(
-                    submission.getCode(),
-                    problem,
-                    submission.getLanguage()
-            );
+            CodeExecutionService.ExecutionResult result;
+            
+            if ("local".equals(executionServiceType)) {
+                result = localExecutionService.executeCode(
+                        submission.getCode(),
+                        problem,
+                        submission.getLanguage()
+                );
+            } else {
+                result = dockerExecutionService.executeCode(
+                        submission.getCode(),
+                        problem,
+                        submission.getLanguage()
+                );
+            }
 
             // Update submission with results
             submission.setStatus(result.getStatus());
