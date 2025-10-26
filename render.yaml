@@ -3,7 +3,7 @@ services:
   - type: web
     name: shodh-backend
     env: docker
-    dockerfilePath: ./backend/src/main/docker/Dockerfile.debug
+    dockerfilePath: ./backend/src/main/docker/Dockerfile.simple
     dockerContext: ./backend
     plan: starter
     envVars:

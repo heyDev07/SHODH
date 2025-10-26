@@ -1,6 +1,13 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 
-# Install Java 17, Maven, and necessary tools for code execution
+# Set non-interactive mode and timezone
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# Pre-configure timezone to avoid interactive prompts
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install Java 17, Maven, and necessary tools
 RUN apt-get update && \
     apt-get install -y \
     openjdk-17-jdk \
@@ -12,23 +19,29 @@ RUN apt-get update && \
     gcc \
     g++ \
     bash \
-    coreutils \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set JAVA_HOME
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
 
 WORKDIR /app
 
-# Copy the entire backend directory
-COPY . .
+# Copy pom.xml first for better caching
+COPY pom.xml .
+
+# Download dependencies
+RUN mvn dependency:go-offline -B
+
+# Copy source code
+COPY src ./src
 
 # Build the application
-RUN mvn clean package -DskipTests
+RUN mvn clean package -DskipTests -q
 
 # Expose port
 EXPOSE 8080
 
-# Run the application
-ENTRYPOINT ["java", "-jar", "target/*.jar"]
+# Run the application with proper memory settings
+CMD ["java", "-Xmx512m", "-Xms256m", "-jar", "target/contest-platform-1.0.0.jar"]

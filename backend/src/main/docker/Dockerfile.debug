@@ -1,7 +1,8 @@
 FROM ubuntu:22.04
 
-# Set non-interactive mode
+# Set non-interactive mode and timezone
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
 
 # Install Java 17, Maven, and necessary tools
 RUN apt-get update && \
@@ -16,6 +17,8 @@ RUN apt-get update && \
     g++ \
     bash \
     curl \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # Set JAVA_HOME
